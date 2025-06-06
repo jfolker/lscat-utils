@@ -1,6 +1,6 @@
-import json
+import contextlib
+import mmap
 import os
-import sys
 import time
 import traceback
 
@@ -10,37 +10,33 @@ from sanic import Sanic
 
 #
 # This MJPEG server is designed to support legacy AXIS IP cameras which are
-# only browser-compatible in 2025 using MJPEG streaming mode. Because it is
-# written in Python, taking advantage of multicore processing is done by
-# running multiple instances, each inside a Linux container or BSD jail with
-# its own IP address.
+# only browser-compatible in 2025 using MJPEG streaming mode and provide its
+# video feeds within the mxcube3 and lsnode beamline control applications.
 #
-# In order to bind to port 443 w/o running as root, I recommend keeping it
-# simple and using authbind. This is a simple application that serves video
-# frames and nothing else. No authn/authz, no DB queries, no beamline cmds.
-# If excessive traffic is a problem, we can always add a check to the user's
-# lsnode session cookie later and run behind a reverse proxy.
+# Because Sanic forks child processes and does load-balancing for us, we don't
+# need a reverse proxy. To grab port 443, "authbind --deep" is recommended.
 #
-# In order for this code to work properly, cameras must be configured to push
+# In order for video feeds to work properly, cameras must be configured to push
 # images to a ramdisk via FTP with the "Use temporary file" option selected
-# and write only 1 file. This option in effect saves the entire image to its
-# expected location atomically, allowing this script to keep its
-# implementation simple. The tempfile used by AXIS cameras effectively a form
-# of double-buffering.
+# and write only 1 file ("write up to 1 images and start over").
 #
-# By default, this application is designed to adhere to directory naming
-# conventions established long ago within the Life Sciences Collaborative
-# Access Team (LS-CAT) by Keith Brister for interoperability with lsnode,
-# the beamline control/data collection web application.
+# To test this service in action, embed a url to this server in an HTML <img>
+# tag on another page.
 #
 # -Jory Folker, Jun 4 2025
 #
-PORT=os.getenv("LSCAT_SERVER_PORT", 443)
+port_str=os.getenv("LSCAT_SERVER_PORT", "8080")
+if not port_str.isdigit():
+    raise ValueError(f"The LSCAT_SERVER_PORT env var was set to {port_str}, which is not a valid TCP port number.")
+PORT= 8080 if not port_str.isdigit() else int(port_str)
+ADDR=os.getenv("LSCAT_SERVER_ADDR", "0.0.0.0")
 TLS_CERT=os.getenv("LSCAT_TLS_CERT")
 TLS_KEY=os.getenv("LSCAT_TLS_KEY")
 CAM_DIR=os.getenv("LSCAT_MJPEG_DIR", "/ramcams")
 FRAME_RATE=float(os.getenv("LSCAT_MJPEG_FRAMERATE", "10"))
 FRAME_TIME=1.0/FRAME_RATE
+workers_str=os.getenv("LSCAT_MJPEG_WORKERS", "16")
+WORKERS= 8 if not workers_str.isdigit() else int(workers_str)
 CSP_HEADER=os.getenv("LSCAT_CSP_HEADER", "frame-ancestors 'self' *.ls-cat.org ls-cat.org")
 
 app = Sanic("lscat_mjpeg_server")
@@ -74,18 +70,19 @@ async def mjpeg_server(request, feed=""):
             start = time.perf_counter_ns()
             try:
                 # Send a frame with the expected preamble and postamble
-                # for MJPEG.
-                finfo = os.stat(fileName)
+                # for MJPEG. This is a ramdisk file, so mmap() instead of
+                # read() will avoid redundant copying. Note that we must
+                # use memoryview instead of directly slicing the mmap
+                # object to read the data without copying it.
                 with open(fileName, "rb") as fh:
-                    await response.send(f"--lscat_mjpeg\r\ncontent-type: image/jpg\r\ncontent-length: {finfo.st_size}\r\n\r\n")
-                    await response.send(fh.read())
-                    await response.send(f"\r\n")
+                    with contextlib.closing(mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)) as mm:
+                        await response.send(f"--lscat_mjpeg\r\ncontent-type: image/jpg\r\ncontent-length: {mm.size()}\r\n\r\n")
+                        await response.send(memoryview(mm).tobytes())
+                        await response.send(f"\r\n")
             except Exception as e:
                 raise sanic.exceptions.ServerError
 
-            # Sleep until we expect the next frame to be ready. Under load,
-            # the worst thing that could theoretically happen here is that
-            # we take >90ms to send a frame and we eventually skip a frame.
+            # Sleep until we expect the next frame to be ready.
             # We don't sleep for less than 10ms because the time parameter
             # gets treated as a minimum. The OS scheduler could sleep for
             # longer than we wanted and cause us to drop frames if we're
@@ -93,15 +90,7 @@ async def mjpeg_server(request, feed=""):
             elapsed = float(time.perf_counter_ns() - start)/1000000000.0
             if elapsed > 0 and elapsed < (FRAME_TIME-0.01):
                 await asyncio.sleep(FRAME_TIME - elapsed)
-
-    # This call to the Sanic API sends the obligatory response line and
-    # sets headers for us using our special add_csp_and_disable_caching
-    # decorator. Then, we propagate the response object built by Sanic
-    # into our mjpeg_streamer callback and use it to feed data back into
-    # Sanic, which does the work of sending data to many clients in a
-    # non-blocking manner. Everywhere you see an "await", there is an
-    # opportunity for another thread or process managed by Sanic to do
-    # work while an HTTP session is blocked on I/O.
+    
     response = await request.respond(content_type="multipart/x-mixed-replace; boundary=lscat_mjpeg")
     await mjpeg_streamer(response)
 
@@ -112,14 +101,14 @@ async def forbidden(request):
 if __name__ == '__main__':
     tlsConf = None
     if TLS_CERT:
-        tlsConf = { "cert": TLS_CERT, "key": TLS_KEY }
+        tlsConf = {"cert": TLS_CERT, "key": TLS_KEY}
     
     os.chdir(CAM_DIR)
     try:
         if tlsConf:
-            app.run(host="0.0.0.0", port=PORT, ssl=tlsConf)
+            app.run(host=ADDR, port=PORT, ssl=tlsConf, workers=WORKERS)
         else:
-            app.run(host="0.0.0.0", port=PORT)
+            app.run(host=ADDR, port=PORT, workers=WORKERS)
     except KeyboardInterrupt:
         print("Received SIGINT, shutting down now")
     except Exception as e:
