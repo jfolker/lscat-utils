@@ -77,7 +77,7 @@ async def mjpeg_server(request, feed=""):
                 with open(fileName, "rb") as fh:
                     with contextlib.closing(mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)) as mm:
                         await response.send(f"--lscat_mjpeg\r\ncontent-type: image/jpg\r\ncontent-length: {mm.size()}\r\n\r\n")
-                        await response.send(memoryview(mm).tobytes())
+                        await response.send(memoryview(mm)[:])
                         await response.send(f"\r\n")
             except Exception as e:
                 raise sanic.exceptions.ServerError
