@@ -46,6 +46,7 @@ async def add_csp_and_disable_caching(request, response):
     response.headers["cache-control"] = "no-cache, no-store, must-revalidate"
     response.headers["pragma"] = "no-cache"
     response.headers["connection"] = "keep-alive"
+    response.headers["strict-transport-security"] = "max-age=31536000"
     response.headers["content-security-policy"] = CSP_HEADER
     
 @app.get("/<feed:str>")
