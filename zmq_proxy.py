@@ -3,13 +3,12 @@
 #
 # This script is a general-purpose proxy of the simplest variety. ZMQ does our
 # load-balancing for us under the hood. At LS-CAT, we use this as a proxy
-# between our old remote beamline interface server (lsnode.ls-cat.org) and a set
-# of servers running a bespoke C program written by Keith Brister for rendering
-# JPEG images from datasets produced by MarCCD and Dectris Eiger X-ray
-# detectors.
+# between our legacy remote interface for crystallographic data collection 
+# (lsnode.ls-cat.org) and a small cluster of servers running a bespoke C 
+# program written by Keith Brister for rendering JPEG images from datasets 
+# produced by MarCCD and Dectris X-ray detectors.
 #
-# This script is designed to be run only on internal networks, hence we do not
-# use TLS: the network is assumed secure.
+# This script is designed to be run only on trusted internal networks.
 #
 # We don't check our status reset ourselves because this is designed
 # to run as a daemon (e.g. at LS-CAT, a systemd service). When the connections
