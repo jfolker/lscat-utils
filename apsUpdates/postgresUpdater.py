@@ -272,6 +272,10 @@ class postgresUpdater:
                 columns['enddate'] = sanitizedValue
             elif child.tag == 'timestamp':
                 columns['lastupdatedtime'] = parsePgTimestamp(sanitizedValue).replace(tzinfo=None)
+            elif child.tag == 'proprietary_flag':
+                columns['proprietary'] = sanitizedValue	== 'Y'
+            elif child.tag == 'classified_flag':
+                columns['classified']  = sanitizedValue == 'Y'
         
         queryResults = self.__select('public.experiments', ['lastupdatedtime'], {'esafid': esafId})
         if len(queryResults) <= 0:
