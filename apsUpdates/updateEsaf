@@ -1,0 +1,33 @@
+#!/bin/bash
+function pythonWrapper() {
+    pythonScript=$1
+    shift
+    
+    if [ ! -d ./var/python-venv ]; then
+        # If venv doesn't exist, create it and fetch all the dependencies.
+	      mkdir -p ./var/
+	      python3 -m venv ./var/python-venv
+	      pip3 install --upgrade pip
+	      source ./var/python-venv/bin/activate
+        
+	      # If we can't install psycopg2, psycopg2-binary works. The official
+	      # recommendation from the maintainers is to use psycopg2, but we can
+	      # get away with the binary distribution if we are desperate.
+	      pip3 install --upgrade psycopg2 || pip3 install --upgrade psycopg2-binary
+	      
+	      pip3 install --upgrade ldap3 \
+	          google-auth \
+	          google-api-python-client \
+	          google-auth-httplib2 \
+	          google-auth-oauthlib
+    else
+        source ./var/python-venv/bin/activate
+    fi
+    python3 $pythonScript $@
+}
+
+if [ $UID -ne 0 ]; then
+    echo 'Error: This script requires elevated privileges to create ESAF directories and user accounts.' >&2
+    exit 1
+fi
+pythonWrapper updateEsaf.py $@
