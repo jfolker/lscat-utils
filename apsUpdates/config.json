@@ -1,0 +1,7 @@
+{
+    "gmail" : {
+      "username"    : "esaf@ls-cat.org",
+      "labels"      : ["UNREAD", "INBOX"],
+      "credentials" : "./credentials/credentials.json"
+    }
+}
